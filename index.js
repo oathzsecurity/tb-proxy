@@ -1,3 +1,10 @@
+console.log("🔥 tb-proxy LIVE VERSION: v2.0.0");
+
+app.post("/event", async (req, res) => {
+  console.log("📡 PROXY HIT /event");
+  ...
+});
+
 import express from "express";
 import fetch from "node-fetch";
 
