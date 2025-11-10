@@ -1,17 +1,27 @@
 import express from "express";
 import fetch from "node-fetch";
 
-console.log("🔥 tb-proxy LIVE VERSION - COMMISSIONER Z DO YOU SEE!: v2.2.0");
+console.log("🔥 tb-proxy LIVE VERSION v2.3.0 — OATHZ Relay Online");
 
 const app = express();
 app.use(express.json());
 
-// 🔁 Forward target (your real backend)
+// 🛰 Forward target (main backend)
 const FORWARD_URL = "https://api.oathzsecurity.com/event";
 
-// ✅ Root test route (optional)
+// ✅ Root test route
 app.get("/", (req, res) => {
-  res.status(200).send("tb-proxy OK (v2.2.0)");
+  res.status(200).send("tb-proxy OK (v2.3.0)");
+});
+
+// ✅ Health check endpoint
+app.get("/health", (req, res) => {
+  res.status(200).json({
+    ok: true,
+    service: "tb-proxy",
+    version: "v2.3.0",
+    timestamp: new Date().toISOString()
+  });
 });
 
 // ✅ Main relay route
