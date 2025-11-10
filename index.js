@@ -1,17 +1,17 @@
 import express from "express";
 import fetch from "node-fetch";
 
-console.log("🔥 tb-proxy LIVE VERSION - COMMISSIONER Z DO YOU SEE!: v2.0.0");
+console.log("🔥 tb-proxy LIVE VERSION - COMMISSIONER Z DO YOU SEE!: v2.1.0");
 
 const app = express();
 app.use(express.json());
 
-// 🔁 Forward target (your real backend)
-const FORWARD_URL = "https://api.oathzsecurity.com/event";
+// 🔁 Forward target (real backend on Railway)
+const FORWARD_URL = "https://trackblock-backend.up.railway.app/event";
 
-// ✅ Root test route (optional)
+// ✅ Root test route (optional, for quick sanity check)
 app.get("/", (req, res) => {
-  res.status(200).send("tb-proxy OK (v2.0.0)");
+  res.status(200).send("tb-proxy OK (v2.1.0)");
 });
 
 // ✅ Main relay route
@@ -29,18 +29,16 @@ app.post("/event", async (req, res) => {
     const text = await upstream.text();
     console.log(`➡️ Forwarded → ${FORWARD_URL} (${upstream.status})`);
 
-    // ✅ MUST return so Express doesn't fall through and 301
+    // ✅ Return upstream status/text to the caller
     return res.status(upstream.status).send(text);
 
   } catch (err) {
     console.error("❌ Proxy error:", err);
-
-    // ✅ Same here — must return
     return res.status(502).send("Proxy failure");
   }
 });
 
-// ✅ Catch-all (prevents default redirect)
+// ✅ Catch-all (prevents 404 confusion)
 app.all("*", (req, res) => {
   console.log(`❓ Unknown path: ${req.method} ${req.path}`);
   return res.status(404).send("Not found");
@@ -48,6 +46,6 @@ app.all("*", (req, res) => {
 
 // ✅ Listen (Railway will inject PORT)
 const PORT = process.env.PORT || 8080;
-app.listen(PORT, () =>
-  console.log(`tb-proxy running on :${PORT}`)
-);
+app.listen(PORT, () => {
+  console.log(`tb-proxy running on :${PORT}`);
+});
