@@ -1,7 +1,7 @@
 import express from "express";
 import fetch from "node-fetch";
 
-console.log("🔥 tb-proxy LIVE VERSION - COMMISSIONER Z DO YOU SEE!: v2.1.0");
+console.log("🔥 tb-proxy LIVE VERSION - COMMISSIONER Z DO YOU SEE!: v2.2.0");
 
 const app = express();
 app.use(express.json());
@@ -11,7 +11,7 @@ const FORWARD_URL = "https://api.oathzsecurity.com/event";
 
 // ✅ Root test route (optional)
 app.get("/", (req, res) => {
-  res.status(200).send("tb-proxy OK (v2.1.0)");
+  res.status(200).send("tb-proxy OK (v2.2.0)");
 });
 
 // ✅ Main relay route
@@ -26,29 +26,32 @@ app.post("/event", async (req, res) => {
       body: JSON.stringify(req.body),
     });
 
-    const text = await upstream.text();
+    const result = await upstream.text();
     console.log(`➡️ Forwarded → ${FORWARD_URL} (${upstream.status})`);
 
-    // ✅ Properly return JSON response for Cloudflare
-    res.status(upstream.status);
+    // ✅ Cloudflare-safe JSON return
+    res.status(upstream.status || 200);
     res.set("Content-Type", "application/json");
-    return res.send(text);
+
+    if (result.trim().startsWith("{")) {
+      return res.send(result);
+    } else {
+      return res.send(JSON.stringify({ ok: true, forwarded: true }));
+    }
 
   } catch (err) {
     console.error("❌ Proxy error:", err);
-    res.status(502);
-    res.set("Content-Type", "application/json");
-    return res.send(JSON.stringify({ error: "Proxy failure" }));
+    res.status(502).json({ error: "Proxy failure", details: err.message });
   }
 });
 
-// ✅ Catch-all (prevents default redirect)
+// ✅ Catch-all (prevents Cloudflare 404 fallthrough)
 app.all("*", (req, res) => {
   console.log(`❓ Unknown path: ${req.method} ${req.path}`);
   res.status(404).send("Not found");
 });
 
-// ✅ Listen (Railway will inject PORT)
+// ✅ Listen (Railway injects PORT automatically)
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
   console.log(`tb-proxy running on :${PORT}`);
