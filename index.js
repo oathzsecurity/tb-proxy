@@ -6,10 +6,10 @@ console.log("🔥 tb-proxy LIVE VERSION - COMMISSIONER Z DO YOU SEE!: v2.1.0");
 const app = express();
 app.use(express.json());
 
-// 🔁 Forward target (real backend on Railway)
-const FORWARD_URL = "https://trackblock-backend.up.railway.app/event";
+// 🔁 Forward target (your real backend)
+const FORWARD_URL = "https://api.oathzsecurity.com/event";
 
-// ✅ Root test route (optional, for quick sanity check)
+// ✅ Root test route (optional)
 app.get("/", (req, res) => {
   res.status(200).send("tb-proxy OK (v2.1.0)");
 });
@@ -29,19 +29,23 @@ app.post("/event", async (req, res) => {
     const text = await upstream.text();
     console.log(`➡️ Forwarded → ${FORWARD_URL} (${upstream.status})`);
 
-    // ✅ Return upstream status/text to the caller
-    return res.status(upstream.status).send(text);
+    // ✅ Properly return JSON response for Cloudflare
+    res.status(upstream.status);
+    res.set("Content-Type", "application/json");
+    return res.send(text);
 
   } catch (err) {
     console.error("❌ Proxy error:", err);
-    return res.status(502).send("Proxy failure");
+    res.status(502);
+    res.set("Content-Type", "application/json");
+    return res.send(JSON.stringify({ error: "Proxy failure" }));
   }
 });
 
-// ✅ Catch-all (prevents 404 confusion)
+// ✅ Catch-all (prevents default redirect)
 app.all("*", (req, res) => {
   console.log(`❓ Unknown path: ${req.method} ${req.path}`);
-  return res.status(404).send("Not found");
+  res.status(404).send("Not found");
 });
 
 // ✅ Listen (Railway will inject PORT)
