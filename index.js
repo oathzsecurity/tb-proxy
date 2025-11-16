@@ -1,30 +1,50 @@
 import express from "express";
 import fetch from "node-fetch";
+import twilio from "twilio";
 
-console.log("🔥 tb-proxy LIVE VERSION v2.3.0 — OATHZ Relay Online");
+console.log("🔥 tb-proxy LIVE VERSION v3.0.0 — OATHZ Relay + Twilio Alerts Online");
 
 const app = express();
 app.use(express.json());
 
-// 🛰 Forward target (main backend)
-const FORWARD_URL = "https://api.oathzsecurity.com/event";
+// 🛰 MAIN BACKEND TARGET
+const FORWARD_URL = process.env.FORWARD_URL || "https://api.oathzsecurity.com/event";
 
-// ✅ Root test route
+// 🛜 TWILIO CREDS (loaded from Railway variables)
+const {
+  TWILIO_ACCOUNT_SID,
+  TWILIO_AUTH_TOKEN,
+  TWILIO_NUMBER
+} = process.env;
+
+const twilioClient =
+  TWILIO_ACCOUNT_SID && TWILIO_AUTH_TOKEN
+    ? twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+    : null;
+
+// ======================================================
+// 🩺 Root test route
+// ======================================================
 app.get("/", (req, res) => {
-  res.status(200).send("tb-proxy OK (v2.3.0)");
+  res.status(200).send("tb-proxy OK (v3.0.0)");
 });
 
-// ✅ Health check endpoint
+// ======================================================
+// ❤️ HEALTH CHECK
+// ======================================================
 app.get("/health", (req, res) => {
   res.status(200).json({
     ok: true,
     service: "tb-proxy",
-    version: "v2.3.0",
-    timestamp: new Date().toISOString()
+    version: "v3.0.0",
+    timestamp: new Date().toISOString(),
+    twilio_ready: !!twilioClient
   });
 });
 
-// ✅ Main relay route
+// ======================================================
+// 📡 CORE FORWARDING RELAY
+// ======================================================
 app.post("/event", async (req, res) => {
   console.log("📡 PROXY HIT /event");
   console.log("📩 Incoming body:", req.body);
@@ -39,7 +59,6 @@ app.post("/event", async (req, res) => {
     const result = await upstream.text();
     console.log(`➡️ Forwarded → ${FORWARD_URL} (${upstream.status})`);
 
-    // ✅ Cloudflare-safe JSON return
     res.status(upstream.status || 200);
     res.set("Content-Type", "application/json");
 
@@ -55,14 +74,78 @@ app.post("/event", async (req, res) => {
   }
 });
 
-// ✅ Catch-all (prevents Cloudflare 404 fallthrough)
-app.all("*", (req, res) => {
-  console.log(`❓ Unknown path: ${req.method} ${req.path}`);
-  res.status(404).send("Not found");
+// ======================================================
+// 📩 SEND SMS VIA TWILIO
+// ======================================================
+app.post("/twilio/sms", async (req, res) => {
+  if (!twilioClient) {
+    return res.status(500).json({ ok: false, error: "Twilio not configured" });
+  }
+
+  const { to, body } = req.body;
+
+  if (!to || !body) {
+    return res.status(400).json({ ok: false, error: "Missing 'to' or 'body'" });
+  }
+
+  console.log(`📨 Sending SMS → ${to}`);
+
+  try {
+    const msg = await twilioClient.messages.create({
+      from: TWILIO_NUMBER,
+      to,
+      body
+    });
+
+    res.json({ ok: true, sid: msg.sid });
+  } catch (err) {
+    console.error("❌ SMS ERROR:", err.message);
+    res.status(500).json({ ok: false, error: err.message });
+  }
 });
 
-// ✅ Listen (Railway injects PORT automatically)
+// ======================================================
+// ☎️ MAKE 10-SECOND ALERT CALL
+// ======================================================
+app.post("/twilio/call", async (req, res) => {
+  if (!twilioClient) {
+    return res.status(500).json({ ok: false, error: "Twilio not configured" });
+  }
+
+  const { to } = req.body;
+
+  if (!to) {
+    return res.status(400).json({ ok: false, error: "Missing 'to'" });
+  }
+
+  console.log(`📞 Calling → ${to}`);
+
+  try {
+    const call = await twilioClient.calls.create({
+      from: TWILIO_NUMBER,
+      to,
+      url: "https://trackblock-alerts.s3.amazonaws.com/alert.xml"
+    });
+
+    res.json({ ok: true, sid: call.sid });
+  } catch (err) {
+    console.error("❌ CALL ERROR:", err.message);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// ======================================================
+// 🚫 CATCH-ALL
+// ======================================================
+app.all("*", (req, res) => {
+  console.log(`❓ Unknown path: ${req.method} ${req.path}`);
+  res.status(404).json({ ok: false, error: "Not found" });
+});
+
+// ======================================================
+// 🚀 START SERVER
+// ======================================================
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
-  console.log(`tb-proxy running on :${PORT}`);
+  console.log(`🟢 tb-proxy running on :${PORT}`);
 });
