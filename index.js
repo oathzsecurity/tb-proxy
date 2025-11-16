@@ -7,48 +7,94 @@ console.log("🔥 tb-proxy LIVE VERSION v3.0.0 — OATHZ Relay + Twilio Alerts O
 const app = express();
 app.use(express.json());
 
-// 🛰 MAIN BACKEND TARGET
+// 🛰 Backend forward target
 const FORWARD_URL = process.env.FORWARD_URL || "https://api.oathzsecurity.com/event";
 
-// 🛜 TWILIO CREDS (loaded from Railway variables)
-const {
-  TWILIO_ACCOUNT_SID,
-  TWILIO_AUTH_TOKEN,
-  TWILIO_NUMBER
-} = process.env;
+// 🟢 Twilio Environment Vars (MUST exist in Railway)
+const TWILIO_SID    = process.env.TWILIO_ACCOUNT_SID;
+const TWILIO_TOKEN  = process.env.TWILIO_AUTH_TOKEN;
+const TWILIO_FROM   = process.env.TWILIO_NUMBER;
+const TWILIO_TO     = process.env.TWILIO_NOTIFY_NUMBER;   // <— YOUR number for now
 
-const twilioClient =
-  TWILIO_ACCOUNT_SID && TWILIO_AUTH_TOKEN
-    ? twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-    : null;
+let twilioClient = null;
 
-// ======================================================
-// 🩺 Root test route
-// ======================================================
+// Only initialise client if all vars exist
+if (TWILIO_SID && TWILIO_TOKEN && TWILIO_FROM) {
+  twilioClient = twilio(TWILIO_SID, TWILIO_TOKEN);
+  console.log("📞 Twilio client initialised");
+} else {
+  console.log("⚠️ Twilio disabled — missing environment vars");
+}
+
+// ======================
+// ROOT TEST ROUTES
+// ======================
 app.get("/", (req, res) => {
   res.status(200).send("tb-proxy OK (v3.0.0)");
 });
 
-// ======================================================
-// ❤️ HEALTH CHECK
-// ======================================================
 app.get("/health", (req, res) => {
   res.status(200).json({
     ok: true,
     service: "tb-proxy",
     version: "v3.0.0",
-    timestamp: new Date().toISOString(),
-    twilio_ready: !!twilioClient
+    twilio_ready: !!twilioClient,
+    forward_url: FORWARD_URL,
+    timestamp: new Date().toISOString()
   });
 });
 
-// ======================================================
-// 📡 CORE FORWARDING RELAY
-// ======================================================
+// ============================
+//   🔥 MAIN RELAY + ALERT LOGIC
+// ============================
 app.post("/event", async (req, res) => {
   console.log("📡 PROXY HIT /event");
-  console.log("📩 Incoming body:", req.body);
+  console.log("📩 Incoming:", req.body);
 
+  const { event_type, device_id, latitude, longitude } = req.body;
+
+  // 🛑 SAFETY CHECK — prevent undefined numbers
+  const alertsEnabled = twilioClient && TWILIO_TO && TWILIO_FROM;
+
+  // ============================
+  // 🔔 AUTO ALERT ON MOVEMENT
+  // ============================
+  if (event_type === "movement_confirmed" && alertsEnabled) {
+    console.log("🚨 MOVEMENT CONFIRMED — FIRING TWILIO ALERTS");
+
+    try {
+      const smsBody =
+        `🚨 TRACKBLOCK ALERT 🚨\n` +
+        `${device_id} IS MOVING!\n\n` +
+        (latitude && longitude
+          ? `LIVE LOCATION:\n${latitude}, ${longitude}`
+          : `NO GPS FIX YET`);
+
+      // SEND SMS
+      await twilioClient.messages.create({
+        body: smsBody,
+        from: TWILIO_FROM,
+        to: TWILIO_TO
+      });
+
+      console.log("📲 SMS SENT");
+
+      // SEND 10-SECOND CALL
+      await twilioClient.calls.create({
+        to: TWILIO_TO,
+        from: TWILIO_FROM,
+        twiml: `<Response><Say voice="man">Warning. Your Trackblock device is moving. Check your dashboard immediately.</Say></Response>`
+      });
+
+      console.log("📞 CALL PLACED");
+    } catch (err) {
+      console.error("❌ TWILIO ERROR:", err);
+    }
+  }
+
+  // ============================
+  // 🔁 FORWARD EVENT TO BACKEND
+  // ============================
   try {
     const upstream = await fetch(FORWARD_URL, {
       method: "POST",
@@ -56,96 +102,36 @@ app.post("/event", async (req, res) => {
       body: JSON.stringify(req.body),
     });
 
-    const result = await upstream.text();
+    const upstreamText = await upstream.text();
     console.log(`➡️ Forwarded → ${FORWARD_URL} (${upstream.status})`);
 
     res.status(upstream.status || 200);
     res.set("Content-Type", "application/json");
 
-    if (result.trim().startsWith("{")) {
-      return res.send(result);
+    if (upstreamText.trim().startsWith("{")) {
+      return res.send(upstreamText);
     } else {
       return res.send(JSON.stringify({ ok: true, forwarded: true }));
     }
 
   } catch (err) {
-    console.error("❌ Proxy error:", err);
-    res.status(502).json({ error: "Proxy failure", details: err.message });
+    console.error("❌ PROXY ERROR:", err);
+    res.status(502).json({ error: "proxy_failure", details: err.message });
   }
 });
 
-// ======================================================
-// 📩 SEND SMS VIA TWILIO
-// ======================================================
-app.post("/twilio/sms", async (req, res) => {
-  if (!twilioClient) {
-    return res.status(500).json({ ok: false, error: "Twilio not configured" });
-  }
-
-  const { to, body } = req.body;
-
-  if (!to || !body) {
-    return res.status(400).json({ ok: false, error: "Missing 'to' or 'body'" });
-  }
-
-  console.log(`📨 Sending SMS → ${to}`);
-
-  try {
-    const msg = await twilioClient.messages.create({
-      from: TWILIO_NUMBER,
-      to,
-      body
-    });
-
-    res.json({ ok: true, sid: msg.sid });
-  } catch (err) {
-    console.error("❌ SMS ERROR:", err.message);
-    res.status(500).json({ ok: false, error: err.message });
-  }
-});
-
-// ======================================================
-// ☎️ MAKE 10-SECOND ALERT CALL
-// ======================================================
-app.post("/twilio/call", async (req, res) => {
-  if (!twilioClient) {
-    return res.status(500).json({ ok: false, error: "Twilio not configured" });
-  }
-
-  const { to } = req.body;
-
-  if (!to) {
-    return res.status(400).json({ ok: false, error: "Missing 'to'" });
-  }
-
-  console.log(`📞 Calling → ${to}`);
-
-  try {
-    const call = await twilioClient.calls.create({
-      from: TWILIO_NUMBER,
-      to,
-      url: "https://trackblock-alerts.s3.amazonaws.com/alert.xml"
-    });
-
-    res.json({ ok: true, sid: call.sid });
-  } catch (err) {
-    console.error("❌ CALL ERROR:", err.message);
-    res.status(500).json({ ok: false, error: err.message });
-  }
-});
-
-// ======================================================
-// 🚫 CATCH-ALL
-// ======================================================
+// ======================
+//  404 FALLBACK
+// ======================
 app.all("*", (req, res) => {
-  console.log(`❓ Unknown path: ${req.method} ${req.path}`);
-  res.status(404).json({ ok: false, error: "Not found" });
+  console.log(`❓ Unknown route ${req.method} ${req.path}`);
+  res.status(404).send("Not found");
 });
 
-// ======================================================
-// 🚀 START SERVER
-// ======================================================
+// ======================
+//  LISTEN
+// ======================
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
-  console.log(`🟢 tb-proxy running on :${PORT}`);
+  console.log(`🟢 tb-proxy listening on ${PORT}`);
 });
